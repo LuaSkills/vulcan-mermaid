@@ -71,7 +71,7 @@ Markdown 字段安全展示标题、段落、项目符号和围栏代码块；HT
 
 ## 开发、验证与打包
 
-`.luaskills-version` 锁定 [luaskills-debug](https://github.com/LuaSkills/luaskills-debug) 发布版本 **v0.8.0**（其主次版本号跟随内嵌的 LuaSkills 运行时），`dependencies.yaml` 锁定受管 Node **24.18.0** 与 pnpm **11.11.0**。首次开发准备需要联网下载官方运行时及锁定依赖；导出的 HTML 无网络依赖。
+`.luaskills-version` 锁定 [luaskills-debug](https://github.com/LuaSkills/luaskills-debug) 发布版本 **v0.8.1**（其主次版本号跟随内嵌的 LuaSkills 运行时），`dependencies.yaml` 锁定受管 Node **24.18.0** 与 pnpm **11.11.0**。首次开发准备需要联网下载官方运行时及锁定依赖；导出的 HTML 无网络依赖。
 
 `scripts/setup_debug.ps1` / `scripts/setup_debug.sh` 从 luaskills-debug 发布页下载 `luaskills-debug-tool-{platform}.tar.gz` 与 `luaskills-debug-checksums.txt`，按校验和文件中对应行验证压缩包 SHA-256，再解压到被 Git 忽略的 `.luaskills-debug/`（该目录不得是符号链接或目录联接）。Lua 运行时包、Node.js 与 pnpm 由压缩包内附带的 `setup_runtime` 和 `scripts/deps/fetch_managed_runtimes.*` 安装。
 
@@ -84,6 +84,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify_skill.ps1
 
 Linux/macOS 使用 `bash scripts/verify_skill.sh`，需 Python 3.11+ 和 PyYAML。验证包括发布版本测试、受管 Node 回归、跨平台资源复制（`scripts/build_viewer.mjs`）、luaskills-debug sync/inspect/list-tools/call 全链路，在显式 PWD 和无 PWD 完整路径两种模式下调用全部 9 个 action，并断言只注册一个工具；随后执行 `validate` 与 `package`，在 `dist/` 生成 `vulcan-mermaid-v<版本>-skill.zip` 和 `vulcan-mermaid-v<版本>-checksums.txt`。ZIP 只有一个 `vulcan-mermaid/` 顶层目录，包含 `skill.yaml`、`dependencies.yaml`、两份 README、`LICENSE`、`runtime/`、`node/`、`help/`、`overflow_templates/`、`resources/`、`licenses/`。已构建的查看器资源（`resources/dagre.min.js` 与复制的许可证）随源码提交，打包无需构建步骤。
 
-推送 `v*` 标签时，发布工作流运行 `LuaSkills/luaskills-debug@v0.8.0` Action（`layout: standard`，`expect-tag` 为该标签，必须等于 `v<skill.yaml 版本>`），再用 `gh release create` 发布其产物；验证工作流在 Linux、Windows、macOS 上运行验证流程并上传 `dist/*`。仓库不自动创建远端或发布。
+推送 `v*` 标签时，发布工作流运行 `LuaSkills/luaskills-debug@v0.8.1` Action（`layout: standard`，`expect-tag` 为该标签，必须等于 `v<skill.yaml 版本>`），再用 `gh release create` 发布其产物；验证工作流在 Linux、Windows、macOS 上运行验证流程并上传 `dist/*`。仓库不自动创建远端或发布。
 
 `examples/upstream/.omm` 保留上游完整示例：62 个文档节点、6 张流程图。`examples/workspace.args.json` 和 `examples/absolute.args.json` 展示两种路径模式，可改为自己的项目路径。开发缓存、测试、示例、.agents 不进入安装包；许可和来源见 [第三方说明](licenses/THIRD_PARTY_NOTICES.md)。
