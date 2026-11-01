@@ -1,0 +1,14 @@
+{
+  "name": "vulcan-mermaid-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "dagre": "0.8.5",
+    "yaml": "2.8.3"
+  },
+  "scripts": {
+    "test": "node --test ../tests/*.test.mjs",
+    "build": "node ../scripts/build_viewer.mjs"
+  }
+}

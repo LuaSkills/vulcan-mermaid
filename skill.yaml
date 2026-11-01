@@ -1,0 +1,94 @@
+name: Vulcan Mermaid
+version: 0.1.0
+enable: true
+debug: false
+help:
+  main:
+    description: 帮助目录：路径、浏览、编辑、分析、离线导出、工作流与错误处理。
+    file: help/help.md
+  topics:
+    - name: workspace
+      description: 工具总览：九种 action、参数规则及返回结构。
+      file: help/workspace.md
+    - name: paths
+      description: 路径基础：宿主暗传 PWD、无 PWD 完整路径、Windows 与导出位置。
+      file: help/paths.md
+    - name: browse
+      description: 浏览读取：tree、read 与结果路径复用。
+      file: help/browse.md
+    - name: edit
+      description: 文档编辑：init、批量 write、历史与可恢复 delete。
+      file: help/edit.md
+    - name: analyze
+      description: 图分析：validate、diff、refs、流程图语法与引用。
+      file: help/analyze.md
+    - name: export
+      description: 离线查看：导出 HTML、范围、输出路径与查看器操作。
+      file: help/export.md
+    - name: workflow
+      description: 上手流程：根据源码建立架构文档、验证、比较及导出。
+      file: help/workflow.md
+    - name: errors
+      description: 故障定位：错误码、修复方法、限额和恢复边界。
+      file: help/errors.md
+entries:
+  - name: workspace
+    description: Manage local .omm architecture documents with one action-based tool. Optional host-injected PWD enables relative node paths; without PWD use absolute .omm paths. Supports init, tree, read, batch write, delete, validate, diff, refs and offline HTML export. Help topics cover paths, browse, edit, analyze, export, workflow and errors.
+    lua_entry: runtime/workspace.lua
+    lua_module: workspace
+    help: workspace
+    input_schema:
+      type: object
+      additionalProperties: false
+      required: [action]
+      properties:
+        PWD:
+          type: string
+          description: Optional absolute existing project directory, normally injected invisibly by the host. Never inferred from cwd or environment. Omitted/empty PWD requires absolute path and writes[].path (including .omm); explicit text diff needs no PWD.
+        action:
+          type: string
+          enum: [init, tree, read, write, delete, validate, diff, refs, export]
+          description: init creates the workspace; tree/read browse; write updates fields in one batch; delete moves to trash; validate checks syntax/references; diff compares history or before/after; refs lists document links; export writes offline HTML. See categorized help for action-specific examples.
+        path:
+          type: string
+          minLength: 1
+          description: With PWD, a node key such as architecture/api or .omm/architecture/api; absolute paths also work. Without PWD, use /project/.omm[/node] or D:/project/.omm[/node]. read/delete/history diff require a node; init requires the .omm root; tree/validate/refs/export accept root or subtree, and may omit path only with PWD. Never pass diagram.mmd or a project directory here.
+        writes:
+          type: array
+          minItems: 1
+          maxItems: 100
+          description: Required only for write. One entry per node; all entries must resolve to one workspace. Paths and fields are preflighted before writing; batches are not crash-atomic across files.
+          items:
+            type: object
+            additionalProperties: false
+            required: [path, fields]
+            properties:
+              path:
+                type: string
+                minLength: 1
+                description: Node location below .omm. Relative with PWD, otherwise absolute including .omm. The .omm root cannot be written as a node.
+              fields:
+                type: object
+                additionalProperties: false
+                minProperties: 1
+                properties:
+                  description: {type: string, description: "Node overview / 节点概述"}
+                  diagram: {type: string, description: "Architecture flowchart source / 架构流程图源码"}
+                  constraint: {type: string, description: "Design constraints / 设计约束"}
+                  concern: {type: string, description: "Risks and concerns / 风险与关注点"}
+                  context: {type: string, description: "Background and evidence / 背景及依据"}
+                  todo: {type: string, description: "Pending tasks / 待办事项"}
+                  note: {type: string, description: "Additional notes / 补充说明"}
+        before:
+          type: string
+          description: Previous source for filesystem-free diff; must be supplied together with after and without path. No PWD is needed.
+        after:
+          type: string
+          description: Current source paired with before; both may be empty strings. History diff uses path instead.
+        output:
+          type: string
+          minLength: 1
+          description: Only for export. Omit for project/.omm-export/architecture.html. With PWD, a single .html filename is allowed; without PWD, an explicit output must be absolute. Absolute output must be a direct .html file under the selected project's .omm-export directory.
+        recursive:
+          type: boolean
+          description: Required true to delete a node with children. Deletion moves it into .omm/.trash.

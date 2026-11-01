@@ -1,0 +1,45 @@
+name: Validate and Package LuaSkill
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  validate:
+    strategy:
+      matrix:
+        os: [ubuntu-24.04, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install test dependencies
+        run: python -m pip install --upgrade pip pyyaml
+
+      # verify_skill runs the unit tests, downloads luaskills-debug with managed Node.js and pnpm, calls all nine
+      # actions through the debugger, then validates and packages the skill into dist/.
+      # verify_skill 运行单元测试，下载 luaskills-debug 及受管 Node.js 与 pnpm，通过调试器调用全部九个操作，
+      # 然后校验并把技能打包到 dist/。
+      - name: Run complete debugger flow
+        if: runner.os != 'Windows'
+        run: bash ./scripts/verify_skill.sh
+
+      - name: Run complete Windows debugger flow
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/verify_skill.ps1
+
+      - name: Upload verified package
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ github.event.repository.name }}-${{ matrix.os }}-verified-package
+          path: dist/*
+          if-no-files-found: error

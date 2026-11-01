@@ -1,0 +1,40 @@
+name: Release LuaSkill
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  # standard (default): one package for every system. platform: one package per system plus a package index;
+  # it needs bundled payloads, which this skill does not declare. The repository variable LUASKILLS_PACKAGE_LAYOUT
+  # overrides the layout without editing this file.
+  LUASKILLS_PACKAGE_LAYOUT: ${{ vars.LUASKILLS_PACKAGE_LAYOUT || 'standard' }}
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # The offline viewer assets (resources/dagre.min.js and the copied licenses) are committed, so packaging needs
+      # no build step. The action validates the skill, fails when the tag differs from skill.yaml, and writes the
+      # release assets with checksums.
+      # 离线查看器资源（resources/dagre.min.js 与复制的许可证）已提交，打包无需构建步骤。该 Action 校验技能，
+      # 标签与 skill.yaml 不一致时失败，并写出带校验和的发布资产。
+      - name: Validate and package the skill
+        id: package
+        uses: LuaSkills/luaskills-debug@v0.8.0
+        with:
+          layout: ${{ env.LUASKILLS_PACKAGE_LAYOUT }}
+          expect-tag: ${{ github.ref_name }}
+
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OUT_DIR: ${{ steps.package.outputs.out-dir }}
+        run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes "$OUT_DIR"/*

@@ -1,0 +1,8 @@
+{
+  "PWD": "D:/work/my-project",
+  "action": "write",
+  "writes": [
+    {"path": "architecture", "fields": {"description": "API and storage boundaries", "diagram": "graph LR\napi[API] -->|queries| store[Store]"}},
+    {"path": "architecture/store", "fields": {"description": "Persistence boundary"}}
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "action": "write",
+  "writes": [
+    {
+      "path": "D:/work/my-project/.omm/architecture",
+      "fields": {
+        "description": "Local application architecture",
+        "diagram": "graph LR\napi[API] -->|queries| store[Store]"
+      }
+    }
+  ]
+}
