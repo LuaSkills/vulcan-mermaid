@@ -14,6 +14,10 @@ node_modules/
 .luaskills-debug/
 .luaskills-debug.lock*
 
+# Session-local artifacts (screenshots, attachments, temp tool output)
+.vulcan/
+.playwright-mcp/
+
 docs/plan/
 docs/completed/
 

@@ -1,303 +1,508 @@
-// Consume inert snapshot JSON; all user-authored text is assigned through textContent.
-// 消费惰性快照 JSON；所有用户编写文本均通过 textContent 赋值。
-const snapshot=JSON.parse(document.getElementById('snapshot').textContent);
+// Consume inert snapshot JSON and render the upstream-style overview canvas with safe DOM only.
+// 消费惰性快照 JSON，仅用安全 DOM 渲染上游风格的总览画布。
+const snapshot = JSON.parse(document.getElementById('snapshot').textContent);
 // Records are keyed by complete paths to preserve equally named nodes under different perspectives.
 // Records 以完整路径为键，保留不同视角下的同名节点。
-const records=new Map(snapshot.nodes.map(record=>[record.path,record]));
-// Selection and tab retain local navigation state without any network or filesystem API.
-// Selection 和 tab 保存本地导航状态，不使用网络或文件系统 API。
-let selection=snapshot.nodes.length===0?null:snapshot.nodes[0].path, tab='details';
-// View describes the current SVG viewport and drag anchor.
-// View 描述当前 SVG 视口及拖动锚点。
-let view={x:0,y:0,width:800,height:500}, dimensions={width:800,height:500}, drag=null;
-// Svg is the single reusable drawing surface.
-// Svg 是唯一复用的绘图表面。
-const svg=document.getElementById('graph');
+const records = new Map(snapshot.nodes.map(record => [record.path, record]));
+// Canvas state mirrors the upstream viewer: translate/scale viewport, selection and detail tab.
+// 画布状态与上游查看器一致：平移/缩放视口、选择与详情标签页。
+const wrap = document.getElementById('canvas-wrap'), canvas = document.getElementById('canvas');
+const sidebar = document.getElementById('sidebar'), details = document.getElementById('details');
+const zoomLabel = document.getElementById('zoom-label');
+let vpX = 0, vpY = 0, vpScale = 0.7, scene = null, selection = null, tab = 'details';
+const MIN_SCALE = 0.02, MAX_SCALE = 30;
 
 /** Create a safe HTML element; tag/text/className describe it, returns an unattached element.
- * 创建安全 HTML 元素；tag/text/className 描述元素，返回未挂载元素。
+ *  创建安全 HTML 元素；tag/text/className 描述它，返回未挂载元素。
  */
-function element(tag,text='',className='') {
-  // Created receives plain text rather than interpreted markup.
-  // Created 接收纯文本而非解释后的标记。
-  const created=document.createElement(tag);
-  created.textContent=text; created.className=className; return created;
+function element(tag, text = '', className = '') {
+  const created = document.createElement(tag);
+  created.textContent = text; created.className = className; return created;
 }
 
 /** Create an SVG element with explicit attributes; tag/attrs/text describe it, returns a safe SVG node.
- * 使用显式属性创建 SVG 元素；tag/attrs/text 描述元素，返回安全 SVG 节点。
+ *  使用显式属性创建 SVG 元素；tag/attrs/text 描述它，返回安全 SVG 节点。
  */
-function vector(tag,attrs={},text='') {
-  // Created is namespaced so browser HTML parsing is never involved.
-  // Created 使用命名空间创建，从不涉及浏览器 HTML 解析。
-  const created=document.createElementNS('http://www.w3.org/2000/svg',tag);
-  for (const [name,value] of Object.entries(attrs)) created.setAttribute(name,String(value));
-  created.textContent=text; return created;
+function vector(tag, attrs = {}, text = '') {
+  const created = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  for (const [name, value] of Object.entries(attrs)) created.setAttribute(name, String(value));
+  created.textContent = text; return created;
+}
+
+/** Measure text with the viewer's system-font stack; text/font identify content, returns pixel width.
+ *  用查看器系统字体栈测量文本；text/font 标识内容，返回像素宽度。
+ */
+const measureContext = document.createElement('canvas').getContext('2d');
+function measure(text, font) {
+  measureContext.font = font || '12px system-ui,"Microsoft YaHei",sans-serif';
+  return Math.ceil(measureContext.measureText(String(text)).width);
 }
 
 /** Render a safe Markdown subset; parent is container, source is field text, returns void.
- * 渲染安全 Markdown 子集；parent 为容器，source 为字段文本，无返回值。
+ *  渲染安全 Markdown 子集；parent 为容器，source 为字段文本，无返回值。
  */
-function markdown(parent,source) {
+function markdown(parent, source) {
   // Code is either the current fenced block or null; HTML and links remain visible literal text.
   // Code 为当前围栏代码块或 null；HTML 与链接保持可见字面文本。
-  let code=null;
+  let code = null;
   for (const line of source.split('\n')) {
     if (line.startsWith('```')) {
-      if (code===null) {code=element('pre');parent.append(code);} else code=null;
-    } else if (code!==null) code.textContent+=`${line}\n`;
-    else if (/^#{1,6}\s/u.test(line)) parent.append(element('h3',line.replace(/^#{1,6}\s/u,'')));
-    else if (/^\s*[-*]\s/u.test(line)) parent.append(element('p',`• ${line.replace(/^\s*[-*]\s/u,'')}`));
-    else if (line.trim()) parent.append(element('p',line));
+      if (code === null) { code = element('pre'); parent.append(code); } else code = null;
+    } else if (code !== null) code.textContent += `${line}\n`;
+    else if (/^#{1,6}\s/u.test(line)) parent.append(element('h3', line.replace(/^#{1,6}\s/u, '')));
+    else if (/^\s*[-*]\s/u.test(line)) parent.append(element('p', `• ${line.replace(/^\s*[-*]\s/u, '')}`));
+    else if (line.trim()) parent.append(element('p', line));
   }
 }
 
-/** Rebuild the filtered tree; no arguments, returns void and preserves selection.
- * 重建过滤后的树；无参数，无返回值并保留选择。
+/** Convert a class definition to a small safe color palette; graph/node supply style, returns allowed colors.
+ *  将类定义转换为受限安全配色；graph/node 提供样式，返回允许的颜色。
  */
-function renderTree() {
-  // Query and tree are the current search value and navigation container.
-  // Query 和 tree 为当前搜索值及导航容器。
-  const query=document.getElementById('search').value.toLocaleLowerCase(), tree=document.getElementById('tree');
-  tree.replaceChildren();
-  for (const record of snapshot.nodes) {
-    if (!`${record.path}\n${record.fields.description===undefined?'':record.fields.description}`.toLocaleLowerCase().includes(query)) continue;
-    // Button uses depth indentation but keeps the full path in its accessible title.
-    // Button 使用层级缩进，但在无障碍标题中保留完整路径。
-    const button=element('button',record.path.split('/').at(-1),`tree-item${record.path===selection?' active':''}`);
-    button.style.paddingLeft=`${10+(record.path.split('/').length-1)*16}px`;
-    button.title=record.path; button.setAttribute('aria-current',String(record.path===selection));
-    button.addEventListener('click',()=>select(record.path)); tree.append(button);
-  }
-  if (!tree.children.length) tree.append(element('p','没有匹配的节点','muted'));
-}
-
-/** Select one known full node path; nodePath identifies it, returns void after rendering.
- * 选择一个已知完整节点路径；nodePath 标识节点，渲染后无返回值。
- */
-function select(nodePath) {
-  if (!records.has(nodePath)) return;
-  selection=nodePath; renderTree(); renderGraph(); renderDetails();
-}
-
-/** Apply the current viewport; no arguments, returns void.
- * 应用当前视口；无参数，无返回值。
- */
-function applyView() { svg.setAttribute('viewBox',`${view.x} ${view.y} ${view.width} ${view.height}`); }
-
-/** Fit the whole layout while respecting the visible surface ratio; no arguments, returns void.
- * 在尊重可见画布比例的同时适应整个布局；无参数，无返回值。
- */
-function fit() {
-  // Ratio reflects the actual responsive drawing area.
-  // Ratio 反映响应式绘图区的实际比例。
-  const ratio=svg.clientWidth/Math.max(1,svg.clientHeight);
-  view.width=Math.max(dimensions.width+70,(dimensions.height+70)*ratio);
-  view.height=view.width/ratio;
-  view.x=(dimensions.width-view.width)/2; view.y=(dimensions.height-view.height)/2; applyView();
-}
-
-/** Zoom around the viewport center; factor is scale multiplier, returns void.
- * 围绕视口中心缩放；factor 为缩放倍数，无返回值。
- */
-function zoom(factor) {
-  // Width is clamped so repeated wheel events never yield a degenerate viewBox.
-  // Width 受到限制，使重复滚轮事件不会产生退化 viewBox。
-  const width=Math.min(20000,Math.max(100,view.width*factor)), ratio=width/view.width;
-  view.x+=(view.width-width)/2; view.y+=(view.height-view.height*ratio)/2;
-  view.width=width;view.height*=ratio;applyView();
-}
-
-/** Resolve node navigation using exact ownership; record/node identify context, returns full path or null.
- * 使用精确归属解析节点导航；record/node 标识上下文，返回完整路径或 null。
- */
-function destination(record,node) {
-  // Reference labels are explicit cross-perspective links in the upstream .omm convention.
-  // Reference 标签是上游 .omm 约定中显式的跨视角链接。
-  const reference=/^@([\w-]+(?:\/[\w-]+)*)/u.exec(node.label);
-  if (reference!==null) return records.has(reference[1])?reference[1]:null;
-  // Child belongs only to the currently selected node; no global short-name fallback is allowed.
-  // Child 仅属于当前所选节点；不允许全局短名称兜底。
-  const child=`${record.path}/${node.id}`;
-  return records.has(child)?child:null;
-}
-
-/** Convert a class definition to a small safe color palette; graph/node supply style, returns allowed SVG colors.
- * 将类定义转换为受限安全配色；graph/node 提供样式，返回允许的 SVG 颜色。
- */
-function colors(graph,node) {
+function colors(styles, node) {
   // Palette defaults to theme tokens rather than interpreting arbitrary Mermaid CSS.
   // Palette 默认使用主题变量，而不解释任意 Mermaid CSS。
-  const palette={fill:'var(--surface)',stroke:'var(--line)',color:'var(--ink)'};
-  for (const definition of graph.styles.filter(style=>style.name===node.className || style.name==='default')) {
+  const palette = { fill: 'var(--surface)', stroke: 'var(--line)', color: 'var(--ink)' };
+  for (const definition of styles.filter(style => style.name === node.className || style.name === 'default')) {
     for (const declaration of definition.style.split(',')) {
       // Match permits only literal hexadecimal colors for the three supported properties.
       // Match 对三个受支持属性仅允许字面十六进制颜色。
-      const match=/^\s*(fill|stroke|color)\s*:\s*(#[\da-f]{3}|#[\da-f]{6}|#[\da-f]{8})\s*$/iu.exec(declaration);
-      if (match) palette[match[1]]=match[2];
+      const match = /^\s*(fill|stroke|color)\s*:\s*(#[\da-f]{3}|#[\da-f]{6}|#[\da-f]{8})\s*$/iu.exec(declaration);
+      if (match) palette[match[1]] = match[2];
     }
   }
   return palette;
 }
 
-/** Render the selected flowchart with Dagre; no arguments, returns void and refuses partial invalid diagrams.
- * 使用 Dagre 渲染所选流程图；无参数，无返回值，拒绝呈现无效图的部分内容。
+/** Changed node ids of one record against its real previous diagram; record supplies history, returns a Set.
+ *  记录相对真实旧图的变化节点 id；record 提供历史，返回集合。
  */
-function renderGraph() {
-  svg.replaceChildren();
-  // Empty and notice present missing/invalid diagrams explicitly.
-  // Empty 和 notice 显式展示缺失或无效图。
-  const empty=document.getElementById('empty'), notice=document.getElementById('notice');
-  empty.textContent=''; notice.style.display='none';
-  if (selection===null) {empty.textContent='工作区为空\n使用 write 添加视角，再重新导出。';return;}
-  // Record and graph are the selected source and its shared-parser result.
-  // Record 和 graph 为所选源码及共享解析器结果。
-  const record=records.get(selection), graph=parseGraph(record.fields.diagram===undefined?'':record.fields.diagram);
-  document.getElementById('title').textContent=record.path;
-  document.getElementById('subtitle').textContent=`${graph.nodes.length} 个节点 · ${graph.edges.length} 条连接 · ${graph.direction}`;
-  if (graph.issues.some(issue=>issue.level==='error')) {empty.textContent='此图无法完整渲染。\n请在右侧查看诊断与原始源码。';notice.textContent='流程图语法或规模超出支持范围，未显示可能误导的局部结果。';notice.style.display='block';return;}
-  // Layout uses the tested adapter so user identifiers never become Dagre object keys.
-  // Layout 使用已测试的适配层，使用户标识符不会成为 Dagre 对象键。
-  const layout=layoutGraph(graph,dagre);
-  // PlacedNodes restores original identifiers only after the third-party layout calculation.
-  // PlacedNodes 仅在第三方布局计算结束后恢复原始标识符。
-  const placedNodes=new Map(layout.nodes.map(node=>[node.id,node]));
-  dimensions={width:layout.width,height:layout.height};
-  // Definitions contain only a fixed local arrow marker.
-  // Definitions 仅包含固定的本地箭头标记。
-  const definitions=vector('defs'), marker=vector('marker',{id:'arrow',viewBox:'0 0 10 10',refX:9,refY:5,markerWidth:7,markerHeight:7,orient:'auto-start-reverse'});
-  marker.append(vector('path',{d:'M 0 0 L 10 5 L 0 10 z',fill:'var(--muted)'})); definitions.append(marker); svg.append(definitions);
-  graph.edges.forEach((edge,index)=>{
-    // Placed is Dagre's route for this exact multigraph edge.
-    // Placed 是 Dagre 为该精确多重图边生成的路径。
-    const placed=layout.edges[index];
-    if (edge.arrow==='~~~') return;
-    // Route connects layout points without allowing arbitrary path text from user input.
-    // Route 连接布局点，不允许用户输入任意路径文本。
-    const route=placed.points.map((point,position)=>`${position===0?'M':'L'} ${point.x} ${point.y}`).join(' ');
-    svg.append(vector('path',{d:route,fill:'none',stroke:'var(--muted)','stroke-width':edge.arrow==='==>'?3:1.5,'stroke-dasharray':edge.arrow==='-.->'?'5 4':'none',...(edge.arrow==='---'||edge.arrow==='--o'||edge.arrow==='--x'?{}:{'marker-end':'url(#arrow)'})}));
-    if (edge.arrow==='--o' || edge.arrow==='--x') {
-      // End locates the circle/cross terminal supplied by the explicit arrow syntax.
-      // End 定位显式箭头语法指定的圆圈或交叉端点。
-      const end=placed.points.at(-1);
-      svg.append(edge.arrow==='--o'?vector('circle',{cx:end.x,cy:end.y,r:4,fill:'var(--bg)',stroke:'var(--muted)'}):vector('path',{d:`M ${end.x-4} ${end.y-4} l 8 8 M ${end.x-4} ${end.y+4} l 8 -8`,stroke:'var(--muted)'}));
-    }
-    if (edge.label) {
-      // Lines display multiline edge labels within the area reserved by the layout adapter.
-      // Lines 在布局适配层预留区域内显示多行边标签。
-      const lines=edge.label.split('\n');
-      lines.forEach((line,lineIndex)=>svg.append(vector('text',{x:placed.x,y:placed.y+(lineIndex-(lines.length-1)/2)*18,'text-anchor':'middle',class:'edge-label'},line)));
-    }
-  });
-  // Changed marks updated/new nodes when a real previous diagram is available.
-  // Changed 在存在真实旧图时标记更新或新增节点。
-  const changed=new Set();
-  if (record.meta!==null && record.meta.prev_diagram!==undefined) {
-    // Difference uses the same semantics as the public diff action.
-    // Difference 使用与公开 diff 操作相同的语义。
-    const difference=diffGraphs(record.meta.prev_diagram,record.fields.diagram);
+function changedNodes(record) {
+  const changed = new Set();
+  if (record.meta !== null && record.meta.prev_diagram !== undefined && record.fields.diagram !== undefined) {
+    const difference = diffGraphs(record.meta.prev_diagram, record.fields.diagram);
     for (const node of difference.added_nodes) changed.add(node.id);
     for (const node of difference.changed_nodes) changed.add(node.after.id);
   }
-  for (const node of graph.nodes) {
-    // Placed, palette, and target supply geometry, safe colors, and exact navigation.
-    // Placed、palette 和 target 提供几何信息、安全颜色及精确导航。
-    const placed=placedNodes.get(node.id), palette=colors(graph,node), target=destination(record,node);
-    // Group carries keyboard access for nodes that lead to a known child or reference.
-    // Group 为指向已知子节点或引用的节点提供键盘操作。
-    const group=vector('g',{transform:`translate(${placed.x},${placed.y})`,class:'graph-node',...(target===null?{}:{tabindex:0,role:'button','aria-label':`打开 ${target}`})});
-    // Width/height describe the local shape bounds around the node center.
-    // Width/height 描述节点中心周围的局部形状边界。
-    const width=placed.width,height=placed.height;
-    // Attributes never include arbitrary CSS or event attributes from the diagram source.
-    // Attributes 从不包含来自图源码的任意 CSS 或事件属性。
-    const attributes={class:'shape',fill:palette.fill,stroke:changed.has(node.id)?'var(--green)':palette.stroke,'stroke-width':changed.has(node.id)?2.5:1.5};
-    if (node.shape==='diamond') group.append(vector('polygon',{...attributes,points:`0,${-height/2} ${width/2},0 0,${height/2} ${-width/2},0`}));
-    else if (node.shape==='circle') group.append(vector('ellipse',{...attributes,cx:0,cy:0,rx:width/2,ry:height/2}));
-    else if (node.shape==='cylinder') group.append(vector('path',{...attributes,d:`M ${-width/2} ${-height/2+9} a ${width/2} 9 0 0 1 ${width} 0 v ${height-18} a ${width/2} 9 0 0 1 ${-width} 0 z M ${-width/2} ${-height/2+9} a ${width/2} 9 0 0 0 ${width} 0`}));
-    else {
-      group.append(vector('rect',{...attributes,x:-width/2,y:-height/2,width,height,rx:node.shape==='stadium'?height/2:node.shape==='round'?12:5}));
-      if (node.shape==='subroutine') group.append(vector('path',{d:`M ${-width/2+8} ${-height/2} v ${height} M ${width/2-8} ${-height/2} v ${height}`,stroke:palette.stroke}));
-    }
-    // Lines are separate SVG text nodes, so embedded markup stays harmless visible text.
-    // Lines 为独立 SVG 文本节点，因此嵌入标记始终是无害可见文本。
-    const lines=node.label.split('\n');
-    lines.forEach((line,index)=>group.append(vector('text',{x:0,y:(index-(lines.length-1)/2)*19+4,'text-anchor':'middle',class:'node-label',fill:palette.color},line)));
-    group.append(vector('title',{},target===null?node.id:`打开 ${target}`));
-    if (target!==null) {
-      group.addEventListener('click',()=>select(target));
-      group.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();select(target);}});
-    }
-    svg.append(group);
-  }
-  fit();
+  return changed;
 }
 
-/** Render current document fields, source, or history; no arguments, returns void.
- * 渲染当前文档字段、源码或历史；无参数，无返回值。
+/** Append one edge with the upstream smooth spline and arrow semantics; group/edge/uid supply context.
+ *  按上游平滑样条与箭头语义追加一条边；group/edge/uid 提供上下文。
+ */
+function drawEdge(group, edge, uid, index) {
+  if (edge.arrow === '~~~') return;
+  const markerId = `${uid}m${index}`;
+  const marker = vector('marker', { id: markerId, markerWidth: 6, markerHeight: 5, refX: 5, refY: 2.5, orient: 'auto', markerUnits: 'userSpaceOnUse' });
+  marker.append(vector('path', { d: 'M0,0.5 L0,4.5 L6,2.5 z', class: 'arrow-head' }));
+  const definitions = vector('defs'); definitions.append(marker); group.append(definitions);
+  const attributes = {
+    class: 'edge-path', d: smoothPath(edge.points), fill: 'none',
+    'stroke-width': edge.arrow === '==>' ? 3 : 2,
+    'data-from': edge.from, 'data-to': edge.to,
+  };
+  if (edge.arrow === '-.->') attributes['stroke-dasharray'] = '5 4';
+  if (!(edge.arrow === '---' || edge.arrow === '--o' || edge.arrow === '--x')) attributes['marker-end'] = `url(#${markerId})`;
+  group.append(vector('path', attributes));
+  if (edge.arrow === '--o' || edge.arrow === '--x') {
+    // End locates the circle/cross terminal supplied by the explicit arrow syntax.
+    // End 定位显式箭头语法指定的圆圈或交叉端点。
+    const end = edge.points[edge.points.length - 1];
+    group.append(edge.arrow === '--o'
+      ? vector('circle', { cx: end.x, cy: end.y, r: 4, class: 'edge-terminal' })
+      : vector('path', { d: `M ${end.x - 4} ${end.y - 4} l 8 8 M ${end.x - 4} ${end.y + 4} l 8 -8`, class: 'edge-cross' }));
+  }
+  if (edge.label) {
+    // Label chip matches the upstream background rectangle with centered text.
+    // 标签片与上游背景矩形加居中文字一致。
+    const labelWidth = measure(edge.label, '9px system-ui,"Microsoft YaHei",sans-serif') + 8;
+    const chip = vector('g', { class: 'edge-label' });
+    chip.append(vector('rect', { x: r1(edge.mid.x - labelWidth / 2), y: r1(edge.mid.y - 6), width: labelWidth, height: 12, rx: 2 }));
+    chip.append(vector('text', { x: r1(edge.mid.x), y: r1(edge.mid.y + 3), 'text-anchor': 'middle', 'font-size': 9 }, edge.label));
+    group.append(chip);
+  }
+}
+
+/** Append one regular node shape and labels; group/node/palette supply geometry and safe colors.
+ *  追加一个普通节点形状与标签；group/node/palette 提供几何与安全颜色。
+ */
+function drawNode(group, node, palette, changed) {
+  const nx = r1(node.x - node.width / 2), ny = r1(node.y - node.height / 2);
+  const attributes = {
+    class: 'nshape', fill: palette.fill,
+    stroke: changed ? 'var(--green)' : palette.stroke,
+    'stroke-width': changed ? 2.5 : 2,
+  };
+  if (node.shape === 'diamond') {
+    group.append(vector('polygon', { ...attributes, points: `${node.x},${ny} ${nx + node.width},${node.y} ${node.x},${ny + node.height} ${nx},${node.y}` }));
+  } else if (node.shape === 'circle') {
+    group.append(vector('ellipse', { ...attributes, cx: node.x, cy: node.y, rx: node.width / 2, ry: node.height / 2 }));
+  } else if (node.shape === 'cylinder') {
+    const w = node.width, h = node.height;
+    group.append(vector('path', { ...attributes, d: `M ${nx} ${ny + 9} a ${w / 2} 9 0 0 1 ${w} 0 v ${h - 18} a ${w / 2} 9 0 0 1 ${-w} 0 z M ${nx} ${ny + 9} a ${w / 2} 9 0 0 0 ${w} 0` }));
+  } else {
+    const radius = node.shape === 'stadium' || node.shape === 'round' ? node.height / 2 : 4;
+    group.append(vector('rect', { ...attributes, x: nx, y: ny, width: node.width, height: node.height, rx: radius }));
+    if (node.shape === 'subroutine') group.append(vector('path', { d: `M ${nx + 8} ${ny} v ${node.height} M ${nx + node.width - 8} ${ny} v ${node.height}`, stroke: palette.stroke, fill: 'none' }));
+  }
+  // Main and path labels follow the upstream two-line presentation.
+  // 主标签与路径标签遵循上游双行呈现。
+  if (node.pathLabel) {
+    group.append(vector('text', { class: 'node-lbl', x: node.x, y: r1(node.y - 7), 'text-anchor': 'middle', 'dominant-baseline': 'central', 'font-size': 12, fill: palette.color }, node.mainLabel));
+    group.append(vector('text', { class: 'node-path', x: node.x, y: r1(node.y + 7), 'text-anchor': 'middle', 'dominant-baseline': 'central', 'font-size': 9, fill: palette.color }, node.pathLabel));
+  } else {
+    group.append(vector('text', { class: 'node-lbl', x: node.x, y: node.y, 'text-anchor': 'middle', 'dominant-baseline': 'central', 'font-size': 12, fill: palette.color }, node.mainLabel));
+  }
+}
+
+/** Render one scene group recursively into safe SVG; group/depth/uid supply context, returns the SVG group.
+ *  将一个场景分组递归渲染为安全 SVG；group/depth/uid 提供上下文，返回 SVG 分组。
+ */
+function renderGroup(group, depth, uid) {
+  const record = records.get(group.path);
+  const changed = changedNodes(record);
+  const outer = vector('g', { class: 'grp-node', 'data-cls': group.path, 'data-depth': depth, transform: `translate(${group.x},${group.y})`, tabindex: 0, role: 'button', 'aria-label': `打开 ${group.path}` });
+  outer.append(vector('rect', { class: 'grp-border', width: group.width, height: group.height, rx: depth === 0 ? 8 : 5, 'stroke-width': 2 }));
+  // Top label chip and centered label reproduce the upstream group chrome.
+  // 顶部标签片与居中标签复现上游分组外观。
+  const title = formatLabel(group.path.split('/').pop());
+  const titleWidth = measure(title, '600 10px system-ui,"Microsoft YaHei",sans-serif') + 14;
+  outer.append(vector('rect', { class: 'grp-label-top grp-label-bg', x: 6, y: -10, width: titleWidth, height: 20, rx: 2 }));
+  outer.append(vector('text', { class: 'grp-label-top', x: 12, y: 3, 'font-size': 10, 'font-weight': 600, 'letter-spacing': '0.05em' }, title));
+  const inner = vector('g', { class: 'grp-inner' });
+  group.edges.forEach((edge, index) => drawEdge(inner, edge, `${uid}g${depth}_`, index));
+  for (const node of group.nodes) {
+    if (node.sub !== null) {
+      // Embedded sub-group: scaled content inside a clipped boundary, like upstream.
+      // 内嵌子图：裁剪边界内的缩放内容，与上游一致。
+      const sub = node.sub, pad = 12;
+      const boxWidth = r1(sub.group.width * sub.fitScale + pad * 2), boxHeight = r1(sub.group.height * sub.fitScale + pad * 2);
+      const nx = r1(node.x - node.width / 2), ny = r1(node.y - node.height / 2);
+      const clipId = `${uid}clip_${depth}_${node.id.replace(/[^\w-]/gu, '')}`;
+      const definitions = vector('defs');
+      const clip = vector('clipPath', { id: clipId });
+      clip.append(vector('rect', { x: -2, y: -16, width: boxWidth + 4, height: boxHeight + 18, rx: 6 }));
+      definitions.append(clip); inner.append(definitions);
+      const subOuter = renderGroup({ ...sub.group, x: nx, y: ny }, depth + 1, `${uid}s${depth}_`);
+      subOuter.setAttribute('clip-path', `url(#${clipId})`);
+      const border = subOuter.querySelector('.grp-border');
+      border.setAttribute('width', boxWidth); border.setAttribute('height', boxHeight);
+      const subInner = subOuter.querySelector('.grp-inner');
+      subInner.setAttribute('transform', `translate(${pad},${pad}) scale(${sub.fitScale})`);
+      const subLabel = subOuter.querySelectorAll('.grp-label-top');
+      const subTitleWidth = measure(formatLabel(sub.path.split('/').pop()), '600 9px system-ui,"Microsoft YaHei",sans-serif') + 12;
+      subLabel[0].setAttribute('x', 5); subLabel[0].setAttribute('y', -7);
+      subLabel[0].setAttribute('width', subTitleWidth); subLabel[0].setAttribute('height', 14);
+      subLabel[1].setAttribute('x', 10); subLabel[1].setAttribute('y', 2); subLabel[1].setAttribute('font-size', 9);
+      const center = subOuter.querySelector('.grp-label-center');
+      center.setAttribute('x', boxWidth / 2); center.setAttribute('y', boxHeight / 2); center.setAttribute('font-size', 9);
+      inner.append(subOuter);
+      continue;
+    }
+    const palette = colors(group.styles, node);
+    const nodeGroup = vector('g', { class: 'reg-node', 'data-cls': `${group.path}/${node.id}`, tabindex: 0, role: 'button', 'aria-label': `打开 ${group.path}/${node.id}` });
+    drawNode(nodeGroup, node, palette, changed.has(node.id));
+    nodeGroup.append(vector('title', {}, node.target === null ? node.id : `打开 ${node.target}`));
+    inner.append(nodeGroup);
+  }
+  outer.append(inner);
+  outer.append(vector('text', { class: 'grp-label-center', x: r1(group.width / 2), y: r1(group.height / 2), 'text-anchor': 'middle', 'dominant-baseline': 'central', 'font-size': 10, 'font-weight': 600, 'letter-spacing': '0.05em' }, title));
+  return outer;
+}
+
+/** Rebuild the whole overview canvas from the current snapshot; no arguments, returns void.
+ *  从当前快照重建整个总览画布；无参数，无返回值。
+ */
+function rebuild() {
+  canvas.replaceChildren();
+  scene = buildScene(snapshot.nodes, { parseGraph, library: dagre, measure });
+  const empty = document.getElementById('empty');
+  if (scene.groups.length === 0) {
+    empty.textContent = snapshot.nodes.length === 0 ? '工作区为空\n使用 write 添加视角，再重新导出。' : '没有可渲染的流程图\n请检查各节点 diagram 的诊断与源码。';
+    empty.style.display = 'block';
+    return;
+  }
+  empty.style.display = 'none';
+  const svg = vector('svg', { width: scene.width, height: scene.height, xmlns: 'http://www.w3.org/2000/svg' });
+  scene.groups.forEach((group, index) => svg.append(renderGroup(group, 0, `v${index}_`)));
+  canvas.append(svg);
+  applyTransform();
+  if (selection !== null) markSelected(selection);
+}
+
+/** Rebuild the navigation tree with search filtering; no arguments, returns void.
+ *  重建带搜索过滤的导航树；无参数，无返回值。
+ */
+function renderTree() {
+  const query = document.getElementById('search').value.toLocaleLowerCase();
+  const tree = document.getElementById('tree');
+  tree.replaceChildren();
+  for (const record of snapshot.nodes) {
+    const description = record.fields.description === undefined ? '' : record.fields.description;
+    if (!`${record.path}\n${description}`.toLocaleLowerCase().includes(query)) continue;
+    const button = element('button', record.path.split('/').at(-1), `tree-item${record.path === selection ? ' active' : ''}`);
+    button.style.paddingLeft = `${10 + (record.path.split('/').length - 1) * 16}px`;
+    button.title = record.path;
+    button.addEventListener('click', () => openRecord(record.path));
+    tree.append(button);
+  }
+  if (!tree.children.length) tree.append(element('p', '没有匹配的节点', 'muted'));
+}
+
+/** Mark the selected element across canvas and tree; path identifies it, returns void.
+ *  在画布与树中标记所选元素；path 标识它，无返回值。
+ */
+function markSelected(path) {
+  document.querySelectorAll('.grp-node.selected,.reg-node.selected').forEach(node => node.classList.remove('selected'));
+  document.querySelectorAll(`[data-cls="${CSS.escape(path)}"]`).forEach(node => node.classList.add('selected'));
+  document.querySelectorAll('.tree-item').forEach(button => button.classList.toggle('active', button.title === path));
+}
+
+/** Apply the viewport transform with upstream scale compensation and progressive disclosure.
+ *  应用视口变换，带上游缩放补偿与渐进呈现。
+ */
+function applyTransform() {
+  canvas.style.transform = `translate(${vpX}px,${vpY}px) scale(${vpScale})`;
+  const percent = Math.round(vpScale * 100);
+  zoomLabel.textContent = percent >= 1000 ? `${(percent / 100).toFixed(0)}k%` : `${percent}%`;
+  // Group, center and node labels keep readable rendered sizes at any zoom.
+  // 分组、居中与节点标签在任意缩放下保持可读的渲染尺寸。
+  const groupSize = Math.min(72, Math.max(10, 13 / vpScale));
+  document.querySelectorAll('#canvas .grp-label-top').forEach(node => {
+    if (node.tagName === 'text') node.setAttribute('font-size', String(Math.round(groupSize * 10) / 10));
+    else node.setAttribute('height', String(Math.round(groupSize * 1.5)));
+  });
+  const centerSize = Math.min(120, Math.max(14, 20 / vpScale));
+  document.querySelectorAll('#canvas .grp-label-center').forEach(node => node.setAttribute('font-size', String(Math.round(centerSize * 10) / 10)));
+  const nodeSize = Math.min(60, Math.max(11, 11 / vpScale));
+  document.querySelectorAll('#canvas .node-lbl').forEach(node => node.setAttribute('font-size', String(Math.round(nodeSize * 10) / 10)));
+  wrap.classList.toggle('zoom-overview', vpScale < 0.42);
+  // Progressive collapse/expansion follows the upstream viewport-relative thresholds.
+  // 渐进折叠/展开遵循上游相对视口的阈值。
+  const viewportWidth = wrap.clientWidth;
+  document.querySelectorAll('#canvas [data-depth]').forEach(node => {
+    const border = node.querySelector(':scope > .grp-border');
+    if (!border) return;
+    const rect = border.getBoundingClientRect();
+    const depth = Number.parseInt(node.getAttribute('data-depth') || '0', 10);
+    node.classList.toggle('grp-collapsed', rect.width < viewportWidth * 0.275);
+    node.classList.toggle('grp-expanded', rect.width >= viewportWidth * (0.5 + depth * 0.15));
+  });
+}
+
+/** Zoom around a screen point; factor/origin define the change, returns void.
+ *  围绕屏幕点缩放；factor/origin 定义变化，无返回值。
+ */
+function zoomTo(newScale, originX, originY) {
+  const scale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, newScale));
+  const cx = originX ?? wrap.clientWidth / 2, cy = originY ?? wrap.clientHeight / 2;
+  vpX = cx - (cx - vpX) * (scale / vpScale);
+  vpY = cy - (cy - vpY) * (scale / vpScale);
+  vpScale = scale;
+  applyTransform();
+}
+
+/** Fit the whole canvas like the upstream reset; no arguments, returns void.
+ *  按上游重置方式适应整个画布；无参数，无返回值。
+ */
+function centerView() {
+  if (!scene || scene.width === 0) return;
+  const scale = Math.min(0.9, (wrap.clientWidth - 80) / scene.width, (wrap.clientHeight - 80) / scene.height);
+  vpScale = Math.max(MIN_SCALE, scale);
+  vpX = wrap.clientWidth / 2 - (scene.width / 2) * vpScale;
+  vpY = wrap.clientHeight / 2 - (scene.height / 2) * vpScale;
+  applyTransform();
+}
+
+/** Animated viewport transition with ease-out cubic; target values define the destination.
+ *  带缓出三次曲线的视口动画；目标值定义终点。
+ */
+let animationFrame = null;
+function animateTo(toX, toY, toScale, duration = 380) {
+  if (animationFrame !== null) cancelAnimationFrame(animationFrame);
+  const fromX = vpX, fromY = vpY, fromScale = vpScale, start = performance.now();
+  function frame(now) {
+    const t = Math.min(1, (now - start) / duration);
+    const eased = 1 - Math.pow(1 - t, 3);
+    vpX = fromX + (toX - fromX) * eased;
+    vpY = fromY + (toY - fromY) * eased;
+    vpScale = fromScale + (toScale - fromScale) * eased;
+    applyTransform();
+    if (t < 1) animationFrame = requestAnimationFrame(frame);
+  }
+  animationFrame = requestAnimationFrame(frame);
+}
+
+/** Focus one canvas element and exempt it plus ancestors from overview dimming.
+ *  聚焦一个画布元素，并使其与祖先豁免总览淡化。
+ */
+function focusElement(path) {
+  document.querySelectorAll('#canvas [data-cls].focus-exempt').forEach(node => node.classList.remove('focus-exempt'));
+  const target = document.querySelector(`#canvas [data-cls="${CSS.escape(path)}"]`);
+  if (!target) return;
+  target.classList.add('focus-exempt');
+  let ancestor = target.parentElement;
+  while (ancestor) {
+    if (ancestor.hasAttribute && ancestor.hasAttribute('data-cls')) ancestor.classList.add('focus-exempt');
+    ancestor = ancestor.parentElement;
+  }
+  const border = target.querySelector(':scope > .grp-border') || target.querySelector(':scope > .nshape') || target;
+  const rect = border.getBoundingClientRect(), wrapRect = wrap.getBoundingClientRect();
+  const centerX = (rect.left + rect.width / 2 - wrapRect.left - vpX) / vpScale;
+  const centerY = (rect.top + rect.height / 2 - wrapRect.top - vpY) / vpScale;
+  const width = rect.width / vpScale, height = rect.height / vpScale;
+  const drawer = sidebar.classList.contains('open') ? sidebar.offsetWidth : 0;
+  const availableWidth = wrap.clientWidth - drawer - 60, availableHeight = wrap.clientHeight - 60;
+  const targetScale = Math.min(MAX_SCALE, Math.max(0.15, Math.min(availableWidth / width, availableHeight / height) * 0.85));
+  animateTo((wrap.clientWidth - drawer) / 2 - centerX * targetScale, wrap.clientHeight / 2 - centerY * targetScale, targetScale);
+}
+
+/** Open one record: select, show details and focus its canvas element when present.
+ *  打开一条记录：选择、显示详情，并在画布元素存在时聚焦。
+ */
+function openRecord(path) {
+  if (!records.has(path)) return;
+  selection = path;
+  markSelected(path); renderTree(); renderDetails();
+  sidebar.classList.add('open');
+  const scoped = document.querySelector(`#canvas [data-cls="${CSS.escape(path)}"]`) ? path : null;
+  if (scoped !== null) focusElement(scoped);
+}
+
+/** Close the detail drawer and clear selection highlights; no arguments, returns void.
+ *  关闭详情抽屉并清除选择高亮；无参数，无返回值。
+ */
+function closeSidebar() {
+  sidebar.classList.remove('open');
+  selection = null;
+  document.querySelectorAll('.grp-node.selected,.reg-node.selected').forEach(node => node.classList.remove('selected'));
+  document.querySelectorAll('#canvas [data-cls].focus-exempt').forEach(node => node.classList.remove('focus-exempt'));
+  document.querySelectorAll('.tree-item').forEach(button => button.classList.remove('active'));
+  renderDetails();
+}
+
+/** Render the selected record fields, source or history into the drawer; no arguments, returns void.
+ *  将所选记录的字段、源码或历史渲染进抽屉；无参数，无返回值。
  */
 function renderDetails() {
-  // Panel owns only freshly constructed safe DOM nodes.
-  // Panel 仅包含新构建的安全 DOM 节点。
-  const panel=document.getElementById('details');panel.replaceChildren();
-  if (selection===null) {panel.append(element('p','暂无文档。','muted'));return;}
-  // Record is guaranteed to exist by selection validation.
-  // Record 已通过选择校验，保证存在。
-  const record=records.get(selection);
-  if (tab==='source') {
-    panel.append(element('h2','diagram.mmd'),element('pre',record.fields.diagram===undefined?'（未提供）':record.fields.diagram));return;
+  details.replaceChildren();
+  const title = document.getElementById('sb-title');
+  if (selection === null) { title.textContent = '架构工作区'; details.append(element('p', '点击画布中的分组或节点，或在左侧选择文档。', 'muted')); return; }
+  const record = records.get(selection);
+  title.textContent = formatLabel(selection.split('/').pop());
+  if (tab === 'source') {
+    details.append(element('h2', 'diagram.mmd'), element('pre', record.fields.diagram === undefined ? '（未提供）' : record.fields.diagram));
+    return;
   }
-  if (tab==='changes') {
-    if (record.meta===null || record.meta.prev_diagram===undefined || record.fields.diagram===undefined) {panel.append(element('p','尚无上一个图版本。修改 diagram 后重新导出即可比较。','muted'));return;}
-    // Difference includes both semantic changes and the complete-source comparison flag.
-    // Difference 包含语义变化及完整源码比较标记。
-    const difference=diffGraphs(record.meta.prev_diagram,record.fields.diagram);
-    panel.append(element('h2',difference.has_changes?'图已变化':'图未变化'),element('pre',JSON.stringify(difference,null,2)),element('h2','修改前'),element('pre',record.meta.prev_diagram),element('h2','修改后'),element('pre',record.fields.diagram));return;
+  if (tab === 'changes') {
+    if (record.meta === null || record.meta.prev_diagram === undefined || record.fields.diagram === undefined) {
+      details.append(element('p', '尚无上一个图版本。修改 diagram 后重新导出即可比较。', 'muted')); return;
+    }
+    const difference = diffGraphs(record.meta.prev_diagram, record.fields.diagram);
+    details.append(element('h2', difference.has_changes ? '图已变化' : '图未变化'), element('pre', JSON.stringify(difference, null, 2)), element('h2', '修改前'), element('pre', record.meta.prev_diagram), element('h2', '修改后'), element('pre', record.fields.diagram));
+    return;
   }
   // Report comes from the exported validation snapshot, including cross-node reference issues.
   // Report 来自导出的校验快照，包含跨节点引用问题。
-  const report=snapshot.validation.nodes.find(item=>item.path===selection);
-  for (const issue of report.issues) panel.append(element('div',`${issue.line===undefined?'':`L${issue.line} · `}${issue.message}`,`issue ${issue.level}`));
-  // Names map the fixed .omm field set to readable headings.
-  // Names 将固定 .omm 字段集合映射为可读标题。
-  const names={description:'说明',constraint:'约束',concern:'关注点',context:'上下文',todo:'待办',note:'备注'};
-  for (const [field,title] of Object.entries(names)) if (record.fields[field]!==undefined) {panel.append(element('h2',title));markdown(panel,record.fields[field]);}
-  // Related covers both incoming and outgoing links using full paths.
-  // Related 使用完整路径涵盖传入和传出链接。
-  const related=snapshot.refs.filter(ref=>ref.source===selection||ref.target===selection);
-  if (related.length) panel.append(element('h2','引用关系'));
+  const report = snapshot.validation.nodes.find(item => item.path === selection);
+  if (report) for (const issue of report.issues) details.append(element('div', `${issue.line === undefined ? '' : `L${issue.line} · `}${issue.message}`, `issue ${issue.level}`));
+  const names = { description: '说明', constraint: '约束', concern: '关注点', context: '上下文', todo: '待办', note: '备注' };
+  for (const [field, heading] of Object.entries(names)) if (record.fields[field] !== undefined) { details.append(element('h2', heading)); markdown(details, record.fields[field]); }
+  const related = snapshot.refs.filter(ref => ref.source === selection || ref.target === selection);
+  if (related.length) details.append(element('h2', '引用关系'));
   for (const ref of related) {
-    // DestinationPath is explicitly the opposite endpoint of this relation.
-    // DestinationPath 明确为该关系的另一端。
-    const destinationPath=ref.source===selection?ref.target:ref.source;
-    const button=element('button',`${ref.source===selection?'→':'←'} ${destinationPath}${ref.exists?'':' · 缺失'}`,'ref');
-    button.disabled=!records.has(destinationPath);button.addEventListener('click',()=>select(destinationPath));panel.append(button);
+    const destinationPath = ref.source === selection ? ref.target : ref.source;
+    const button = element('button', `${ref.source === selection ? '→' : '←'} ${destinationPath}${ref.exists ? '' : ' · 缺失'}`, 'ref');
+    button.disabled = !records.has(destinationPath);
+    button.addEventListener('click', () => openRecord(destinationPath));
+    details.append(button);
   }
-  if (record.meta!==null) panel.append(element('h2','元数据'),element('pre',JSON.stringify(record.meta,(key,value)=>key==='prev_diagram'?undefined:value,2)));
+  if (record.meta !== null) details.append(element('h2', '元数据'), element('pre', JSON.stringify(record.meta, (key, value) => key === 'prev_diagram' ? undefined : value, 2)));
 }
 
-document.getElementById('search').addEventListener('input',renderTree);
-document.getElementById('theme').addEventListener('click',()=>{document.documentElement.dataset.theme=document.documentElement.dataset.theme==='light'?'dark':'light';});
-document.getElementById('fit').addEventListener('click',fit);
-document.getElementById('zoom-in').addEventListener('click',()=>zoom(.8));
-document.getElementById('zoom-out').addEventListener('click',()=>zoom(1.25));
-for (const button of document.querySelectorAll('[data-tab]')) button.addEventListener('click',()=>{
-  tab=button.dataset.tab;
-  for (const candidate of document.querySelectorAll('[data-tab]')) candidate.setAttribute('aria-selected',String(candidate===button));
+// Canvas interaction: delegated clicks, edge hover highlighting and Figma-style pan/zoom.
+// 画布交互：委托点击、边悬停高亮与 Figma 风格平移/缩放。
+canvas.addEventListener('click', event => {
+  const node = event.target.closest('.grp-node,.reg-node');
+  if (!node) return;
+  event.stopPropagation();
+  openRecord(node.getAttribute('data-cls'));
+});
+canvas.addEventListener('keydown', event => {
+  if (event.key !== 'Enter' && event.key !== ' ') return;
+  const node = event.target.closest('.grp-node,.reg-node');
+  if (!node) return;
+  event.preventDefault();
+  openRecord(node.getAttribute('data-cls'));
+});
+wrap.addEventListener('click', event => { if (!event.target.closest('.grp-node,.reg-node')) closeSidebar(); });
+wrap.addEventListener('mouseover', event => {
+  const node = event.target.closest('.reg-node,.grp-node');
+  if (!node) return;
+  const id = node.getAttribute('data-cls');
+  const parentGroup = node.parentElement.closest('[data-cls]') || node.closest('svg');
+  if (!parentGroup) return;
+  parentGroup.querySelectorAll('.edge-path').forEach(path => {
+    const from = path.getAttribute('data-from'), to = path.getAttribute('data-to');
+    const edgeParent = path.closest('[data-cls]') || path.closest('svg');
+    if (edgeParent !== parentGroup) return;
+    if (from === id || to === id || `@${from}` === id || `@${to}` === id || id.endsWith(`/${from}`) || id.endsWith(`/${to}`)) path.classList.add('edge-hl');
+  });
+});
+wrap.addEventListener('mouseout', event => {
+  if (!event.target.closest('.reg-node,.grp-node')) return;
+  document.querySelectorAll('#canvas .edge-path.edge-hl').forEach(path => path.classList.remove('edge-hl'));
+});
+wrap.addEventListener('wheel', event => {
+  event.preventDefault();
+  document.querySelectorAll('#canvas [data-cls].focus-exempt').forEach(node => node.classList.remove('focus-exempt'));
+  if (event.ctrlKey || event.metaKey) {
+    const factor = event.deltaMode === 0 ? Math.pow(0.993, event.deltaY) : (event.deltaY < 0 ? 1.22 : 1 / 1.22);
+    zoomTo(vpScale * factor, event.clientX - wrap.getBoundingClientRect().left, event.clientY - wrap.getBoundingClientRect().top);
+  } else {
+    vpX -= event.deltaX; vpY -= event.deltaY; applyTransform();
+  }
+}, { passive: false });
+let panning = null;
+wrap.addEventListener('pointerdown', event => {
+  if (event.target.closest('.grp-node,.reg-node') && event.button === 0) return;
+  panning = { x: event.clientX, y: event.clientY, vpX, vpY };
+  wrap.setPointerCapture(event.pointerId); wrap.classList.add('panning');
+});
+wrap.addEventListener('pointermove', event => {
+  if (panning === null) return;
+  vpX = panning.vpX + (event.clientX - panning.x);
+  vpY = panning.vpY + (event.clientY - panning.y);
+  applyTransform();
+});
+for (const name of ['pointerup', 'pointercancel']) wrap.addEventListener(name, () => { panning = null; wrap.classList.remove('panning'); });
+window.addEventListener('keydown', event => {
+  if ((event.metaKey || event.ctrlKey) && !event.shiftKey) {
+    if (event.key === '0') { event.preventDefault(); centerView(); }
+    if (event.key === '1') { event.preventDefault(); zoomTo(1); }
+    if (event.key === '2') { event.preventDefault(); zoomTo(2); }
+    if (event.key === '+' || event.key === '=') { event.preventDefault(); zoomTo(vpScale * 1.25); }
+    if (event.key === '-') { event.preventDefault(); zoomTo(vpScale / 1.25); }
+  }
+  if (event.key === 'Escape') closeSidebar();
+});
+document.getElementById('search').addEventListener('input', renderTree);
+document.getElementById('theme').addEventListener('click', () => {
+  document.documentElement.dataset.theme = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
+});
+document.getElementById('fit').addEventListener('click', centerView);
+document.getElementById('zoom-in').addEventListener('click', () => zoomTo(vpScale * 1.25));
+document.getElementById('zoom-out').addEventListener('click', () => zoomTo(vpScale / 1.25));
+document.getElementById('sb-close').addEventListener('click', closeSidebar);
+document.getElementById('mobile-nav-btn').addEventListener('click', () => {
+  document.getElementById('nav-sidebar').classList.toggle('mobile-open');
+});
+for (const button of document.querySelectorAll('[data-tab]')) button.addEventListener('click', () => {
+  tab = button.dataset.tab;
+  for (const candidate of document.querySelectorAll('[data-tab]')) candidate.setAttribute('aria-selected', String(candidate === button));
   renderDetails();
 });
-svg.addEventListener('wheel',event=>{event.preventDefault();zoom(event.deltaY>0?1.12:.89);},{passive:false});
-svg.addEventListener('pointerdown',event=>{
-  if(event.target.closest('.graph-node'))return;
-  drag={x:event.clientX,y:event.clientY,view:{...view}};svg.setPointerCapture(event.pointerId);svg.classList.add('dragging');
-});
-svg.addEventListener('pointermove',event=>{
-  if(drag===null)return;
-  view.x=drag.view.x-(event.clientX-drag.x)*view.width/svg.clientWidth;
-  view.y=drag.view.y-(event.clientY-drag.y)*view.height/svg.clientHeight;applyView();
-});
-for (const eventName of ['pointerup','pointercancel']) svg.addEventListener(eventName,()=>{drag=null;svg.classList.remove('dragging');});
-new ResizeObserver(fit).observe(document.getElementById('graph-area'));
-document.getElementById('generated').textContent=`快照 ${snapshot.generated.slice(0,10)}`;
-document.getElementById('status').textContent=`${snapshot.nodes.length} nodes · .omm format 0.1.0 · 单文件离线查看器 · 不连接网络 · 数据更新后请重新导出`;
-renderTree();renderGraph();renderDetails();
+new ResizeObserver(() => applyTransform()).observe(wrap);
+document.getElementById('generated').textContent = `快照 ${snapshot.generated.slice(0, 10)}`;
+document.getElementById('status').textContent = `${snapshot.nodes.length} nodes · .omm format 0.1.0 · 单文件离线查看器 · 不连接网络 · 数据更新后请重新导出`;
+rebuild(); renderTree(); renderDetails();
+requestAnimationFrame(centerView);
