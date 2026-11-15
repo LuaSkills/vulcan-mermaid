@@ -297,10 +297,16 @@ export function buildScene(records, options) {
     }
     return { path, width, height, rankdir, nodes: sceneNodes, edges: sceneEdges, styles: graph.styles };
   }
-  // Roots are perspectives without incoming references; cycles fall back to the most outgoing.
-  // 根是没有传入引用的视角；循环时回退到传出最多者。
+  // Roots are candidates without incoming references; cycles fall back to the most outgoing.
+  // Candidates are records whose parent is absent from the snapshot, so subtree exports and
+  // diagram-less parents still yield renderable roots instead of an empty canvas.
+  // 根是没有传入引用的候选；循环时回退到传出最多者。候选是快照内没有父记录的记录，
+  // 因此子树导出与无图父节点仍能产生可渲染的根，而不是空画布。
   const paths = records.map(record => record.path);
-  const topLevel = paths.filter(path => !path.includes('/'));
+  const topLevel = paths.filter(path => {
+    const separator = path.lastIndexOf('/');
+    return separator < 0 || !byPath.has(path.slice(0, separator));
+  });
   const incoming = new Map(topLevel.map(path => [path, 0]));
   const outgoing = new Map(topLevel.map(path => [path, 0]));
   for (const path of topLevel) {
@@ -321,10 +327,22 @@ export function buildScene(records, options) {
   // Groups render once; the overview arranges them in a balanced sqrt grid like upstream.
   // 分组只渲染一次；总览按上游的平衡平方根网格排布。
   const groups = [];
+  const grouped = new Set();
   for (const root of roots) {
     const group = renderGroup(root, 0, new Set());
-    if (group) groups.push(group);
+    if (group) { groups.push(group); grouped.add(root); }
   }
+  // A candidate whose diagram cannot render falls back to its nearest renderable descendants,
+  // so a diagram-less parent never hides the child documents that do have diagrams.
+  // 图无法渲染的候选回退到最近的可渲染后代，无图父节点不会隐藏拥有图的子文档。
+  function rescue(path, level, seen) {
+    if (grouped.has(path)) return;
+    const group = renderGroup(path, level, seen);
+    if (group) { groups.push(group); grouped.add(path); return; }
+    const nextSeen = new Set(seen); nextSeen.add(path);
+    for (const child of children.get(path) || []) rescue(`${path}/${child}`, level + 1, nextSeen);
+  }
+  for (const root of roots) rescue(root, 0, new Set());
   const columns = Math.max(1, Math.ceil(Math.sqrt(groups.length)));
   const rows = Math.ceil(groups.length / columns);
   const columnWidths = Array.from({ length: columns }, (_, column) => Math.max(0, ...groups.filter((group, index) => index % columns === column).map(group => group.width)));

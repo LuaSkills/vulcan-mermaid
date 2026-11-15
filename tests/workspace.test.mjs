@@ -179,6 +179,58 @@ test('offline export embeds escaped data and local resources only',async context
   assert.equal((await main({PWD:root,action:'export',output:'../outside.html'})).ok,false);
 });
 
+test('exported app bundle parses and flat reference nodes carry their navigation target',async context=>{
+  // Root reproduces a reference whose target embeds elsewhere, leaving this node flat.
+  // Root 复现目标已在别处内嵌的引用，使该节点保持平面。
+  const root=fixture(context);
+  await call(root,'write',{writes:[
+    {path:'one',fields:{diagram:'graph LR\na["@shared"]'}},
+    {path:'two',fields:{diagram:'graph LR\nb["@shared"]'}},
+    {path:'shared',fields:{diagram:'graph LR\nx[X]'}},
+  ]});
+  const exported=await call(root,'export'), html=fs.readFileSync(exported.file,'utf8');
+  // Scripts are the inert snapshot, the pinned vendor bundle and the concatenated app bundle.
+  // Scripts 依次为惰性快照、固定第三方包与拼接后的应用 bundle。
+  const scripts=[...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gu)].map(match=>match[1]);
+  assert.equal(scripts.length,3);
+  // Syntax check catches a broken export-stripping/concatenation that string assertions miss.
+  // 语法检查捕获字符串断言遗漏的导出剥离/拼接损坏。
+  assert.doesNotThrow(()=>new vm.Script(scripts[2]),'exported app bundle must parse');
+  // The flat reference node keeps a scene target so the viewer can navigate to the document.
+  // 平面引用节点保留场景目标，使查看器能跳转到该文档。
+  const {buildScene}=await import('../node/layout.mjs');
+  const sandbox={};vm.runInNewContext(fs.readFileSync(new URL('../resources/dagre.min.js',import.meta.url),'utf8'),sandbox,{timeout:1000});
+  const scene=buildScene(JSON.parse(scripts[0]).nodes,{parseGraph,library:sandbox.dagre});
+  const flat=scene.groups.flatMap(group=>group.nodes).find(node=>node.id==='b');
+  assert.ok(flat,'node b must stay flat because shared already embedded');
+  assert.equal(flat.sub,null);
+  assert.equal(flat.target,'shared');
+});
+
+test('subtree export rooted at a nested node renders a non-empty canvas',async context=>{
+  // Root owns a perspective chain; the export selects the nested middle node.
+  // Root 拥有视角链；导出选择中间的嵌套节点。
+  const root=fixture(context);
+  await call(root,'write',{writes:[
+    {path:'architecture',fields:{diagram:'graph LR\napi[API] --> db[DB]'}},
+    {path:'architecture/api',fields:{diagram:'graph LR\nroute[路由] --> handler[处理]'}},
+    {path:'architecture/api/db',fields:{diagram:'graph LR\nsql[SQL] --> disk[(盘)]'}},
+  ]});
+  const exported=await call(root,'export',{path:'architecture/api',output:'sub.html'});
+  assert.equal(exported.nodes,2);
+  const html=fs.readFileSync(exported.file,'utf8');
+  const snapshot=JSON.parse([...html.matchAll(/<script id="snapshot" type="application\/json">([\s\S]*?)<\/script>/gu)][0][1]);
+  assert.deepEqual(snapshot.nodes.map(record=>record.path),['architecture/api','architecture/api/db']);
+  // The embedded scene must root at the nested selection instead of an empty overview.
+  // 内嵌场景必须以嵌套选择为根，而不是空总览。
+  const {buildScene}=await import('../node/layout.mjs');
+  const sandbox={};vm.runInNewContext(fs.readFileSync(new URL('../resources/dagre.min.js',import.meta.url),'utf8'),sandbox,{timeout:1000});
+  const scene=buildScene(snapshot.nodes,{parseGraph,library:sandbox.dagre});
+  assert.deepEqual(scene.roots,['architecture/api']);
+  assert.equal(scene.groups.length,1);
+  assert.ok(scene.width>0&&scene.height>0);
+});
+
 test('unknown format, malformed metadata and locks fail explicitly',async context=>{
   // Root exercises persisted failures independently of host-schema validation.
   // Root 独立于宿主结构校验验证持久化失败。

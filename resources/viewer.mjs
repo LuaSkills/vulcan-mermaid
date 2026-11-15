@@ -356,6 +356,35 @@ function focusElement(path) {
   animateTo((wrap.clientWidth - drawer) / 2 - centerX * targetScale, wrap.clientHeight / 2 - centerY * targetScale, targetScale);
 }
 
+/** Open one canvas element: its own record, or the referenced document for a flat reference node.
+ *  打开一个画布元素：自身记录，或平面引用节点指向的被引用文档。
+ */
+function openCanvasNode(node) {
+  const path = node.getAttribute('data-cls');
+  if (records.has(path)) { openRecord(path); return; }
+  // A reference that was not embedded (target already expanded elsewhere, depth or cycle limits)
+  // still navigates to its target instead of failing silently on a non-record key.
+  // 未内嵌的引用（目标已在别处展开、深度或循环限制）仍跳转到目标，而非在非记录键上静默失败。
+  const embedded = scene === null ? null : findSceneNode(scene.groups, path);
+  if (embedded !== null && embedded.target !== null) openRecord(embedded.target);
+}
+
+/** Locate one scene node by its canvas key; groups/path supply context, returns the node or null.
+ *  按画布键定位一个场景节点；groups/path 提供上下文，返回节点或 null。
+ */
+function findSceneNode(groups, path) {
+  for (const group of groups) {
+    for (const node of group.nodes) {
+      if (`${group.path}/${node.id}` === path) return node;
+      if (node.sub !== null) {
+        const nested = findSceneNode([node.sub.group], path);
+        if (nested !== null) return nested;
+      }
+    }
+  }
+  return null;
+}
+
 /** Open one record: select, show details and focus its canvas element when present.
  *  打开一条记录：选择、显示详情，并在画布元素存在时聚焦。
  */
@@ -425,14 +454,14 @@ canvas.addEventListener('click', event => {
   const node = event.target.closest('.grp-node,.reg-node');
   if (!node) return;
   event.stopPropagation();
-  openRecord(node.getAttribute('data-cls'));
+  openCanvasNode(node);
 });
 canvas.addEventListener('keydown', event => {
   if (event.key !== 'Enter' && event.key !== ' ') return;
   const node = event.target.closest('.grp-node,.reg-node');
   if (!node) return;
   event.preventDefault();
-  openRecord(node.getAttribute('data-cls'));
+  openCanvasNode(node);
 });
 wrap.addEventListener('click', event => { if (!event.target.closest('.grp-node,.reg-node')) closeSidebar(); });
 wrap.addEventListener('mouseover', event => {

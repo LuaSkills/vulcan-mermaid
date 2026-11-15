@@ -156,6 +156,47 @@ test('label formatting and rounding match upstream helpers', () => {
   assert.equal(r1(12.345), 12.3);
 });
 
+test('subtree snapshots root at the selected nested node', () => {
+  // A subtree export omits the parent perspective; the nested root must still render.
+  // 子树导出不含父视角；嵌套根仍必须渲染。
+  const result = scene([
+    {path: 'architecture/api', fields: {diagram: 'graph LR\nroute[路由] --> db[数据库]'}},
+    {path: 'architecture/api/db', fields: {diagram: 'graph LR\nsql[SQL] --> disk[(盘)]'}},
+  ]);
+  assert.deepEqual(result.roots, ['architecture/api']);
+  assert.equal(result.groups.length, 1);
+  assert.equal(result.groups[0].path, 'architecture/api');
+  assert.ok(result.width > 0 && result.height > 0);
+  // The nested child document embeds into the matching node of the subtree root.
+  // 嵌套子文档内嵌进子树根的对应节点。
+  const embedded = result.groups[0].nodes.find(node => node.id === 'db');
+  assert.ok(embedded.sub, 'db must embed its child diagram');
+  assert.equal(embedded.sub.path, 'architecture/api/db');
+});
+
+test('a diagram-less root falls back to its renderable descendants', () => {
+  // The parent owns no diagram; its children must not disappear from the canvas.
+  // 父节点没有图；其子节点不能从画布上消失。
+  const result = scene([
+    {path: 'architecture', fields: {description: 'only prose'}},
+    {path: 'architecture/api', fields: {diagram: 'graph LR\nx[X] --> y[Y]'}},
+    {path: 'architecture/db', fields: {diagram: 'graph LR\nsql[SQL] --> disk[(盘)]'}},
+  ]);
+  assert.deepEqual(result.roots, ['architecture']);
+  assert.deepEqual(result.groups.map(group => group.path).sort(), ['architecture/api', 'architecture/db']);
+  assert.ok(result.width > 0 && result.height > 0);
+});
+
+test('a broken root diagram falls back instead of hiding valid children', () => {
+  // An invalid root diagram must not suppress descendants that parse cleanly.
+  // 无效的根图不能压制能正常解析的后代。
+  const result = scene([
+    {path: 'p', fields: {diagram: 'sequenceDiagram\nA->>B: ping'}},
+    {path: 'p/child', fields: {diagram: 'graph LR\na[A] --> b[B]'}},
+  ]);
+  assert.deepEqual(result.groups.map(group => group.path), ['p/child']);
+});
+
 test('bundled upstream demo builds a complete multi-perspective scene', () => {
   // Read the imported example exactly as the export snapshot would contain it.
   // 按导出快照所含内容原样读取导入示例。
