@@ -26,7 +26,8 @@ dependencies/
 state/
 databases/
 temp/
-/skills/
+/skills/*
+!/skills/mermaid-workflow/
 bin/tools/*
 !bin/tools/.gitkeep
 lua_packages/*

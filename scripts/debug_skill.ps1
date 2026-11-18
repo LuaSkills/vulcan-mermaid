@@ -120,7 +120,11 @@ $ProjectRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
 $DebugRoot = Join-Path $ProjectRoot ".luaskills-debug"
 # BinaryPath is the luaskills-debug executable. The wrapper calls it directly so every subcommand and option is reachable.
 # BinaryPath 是 luaskills-debug 可执行文件。封装脚本直接调用它，使每个子命令与选项都可用。
-$BinaryPath = Join-Path $DebugRoot "bin\luaskills-debug.exe"
+$BinaryPath = if ($env:VULCAN_MERMAID_DEBUGGER) {
+    (Resolve-Path -LiteralPath $env:VULCAN_MERMAID_DEBUGGER).Path
+} else {
+    Join-Path $DebugRoot "bin\luaskills-debug.exe"
+}
 # RuntimeRoot is the package-local runtime used by every official debugger command.
 # RuntimeRoot 是所有官方调试命令共同使用的包内 runtime。
 $RuntimeRoot = Join-Path $DebugRoot "runtime"
@@ -171,7 +175,9 @@ try {
     $ForwardedArgs = @($Command)
     if ($Command -in @("validate", "package")) {
         $ForwardedArgs += @("--skill-path", $ProjectRoot)
-        foreach ($Entry in $Include) {
+        # The package's registered guide must be included even when no extra entries are supplied.
+        # 即使调用方未提供额外条目，也必须打包本包已注册的指南。
+        foreach ($Entry in (@("skills") + $Include | Select-Object -Unique)) {
             $ForwardedArgs += @("--include", $Entry)
         }
     }

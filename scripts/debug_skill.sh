@@ -103,7 +103,7 @@ bash "$PROJECT_ROOT/scripts/setup_debug.sh"
 
 # BinaryPath is the luaskills-debug executable; every option after the command passes through unchanged.
 # BinaryPath 是 luaskills-debug 可执行文件；命令之后的所有选项原样透传。
-BINARY_PATH="$DEBUG_ROOT/bin/luaskills-debug"
+BINARY_PATH="${VULCAN_MERMAID_DEBUGGER:-$DEBUG_ROOT/bin/luaskills-debug}"
 # RuntimeRoot is the package-local runtime used by every official debugger command.
 # RuntimeRoot 是所有官方调试命令共同使用的包内 runtime。
 RUNTIME_ROOT="$DEBUG_ROOT/runtime"
@@ -127,14 +127,14 @@ if [ "$COMMAND" = "probe-mirrors" ]; then
 fi
 
 if [ "$COMMAND" = "validate" ]; then
-  "$BINARY_PATH" validate --skill-path "$PROJECT_ROOT" "$@"
+  "$BINARY_PATH" validate --skill-path "$PROJECT_ROOT" --include skills "$@"
   exit $?
 fi
 
 if [ "$COMMAND" = "package" ]; then
   # Layout is standard by default; the repository variable LUASKILLS_PACKAGE_LAYOUT or --layout selects platform.
   # Layout 默认为 standard；仓库变量 LUASKILLS_PACKAGE_LAYOUT 或 --layout 可选择 platform。
-  "$BINARY_PATH" package --skill-path "$PROJECT_ROOT" --out-dir "$PROJECT_ROOT/dist" --layout "${LUASKILLS_PACKAGE_LAYOUT:-standard}" "$@"
+  "$BINARY_PATH" package --skill-path "$PROJECT_ROOT" --out-dir "$PROJECT_ROOT/dist" --layout "${LUASKILLS_PACKAGE_LAYOUT:-standard}" --include skills "$@"
   exit $?
 fi
 

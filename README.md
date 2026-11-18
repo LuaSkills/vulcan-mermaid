@@ -2,7 +2,7 @@
 
 # Vulcan Mermaid
 
-An independent LuaSkill for local architecture documents, adapted from [oh-my-mermaid](https://github.com/oh-my-mermaid/oh-my-mermaid), built on the LuaSkills demo-skill development scaffold. One public tool, `vulcan-mermaid-workspace`, uses an `action` parameter instead of a growing list of tools.
+An independent LuaSkill for local architecture documents, adapted from [oh-my-mermaid](https://github.com/oh-my-mermaid/oh-my-mermaid), built on the LuaSkills demo-skill development scaffold. One public tool, `vulcan_mermaid_workspace`, uses an `action` parameter instead of a growing list of tools.
 
 ## Quick start
 
@@ -45,7 +45,7 @@ Filesystem success returns `{ok:true,action,workspace,result}`, where workspace 
 
 ## Categorized help
 
-The manifest exposes one help index and eight topics: [workspace](help/workspace.md), [paths](help/paths.md), [browse](help/browse.md), [edit](help/edit.md), [analyze](help/analyze.md), [export](help/export.md), [workflow](help/workflow.md), and [errors](help/errors.md). Start with the [help index](help/help.md) for navigation and examples. Help uses the host's existing help system; no extra workspace tool is added.
+The manifest registers one prompt skill with eight references: [workspace](skills/mermaid-workflow/references/workspace.md), [paths](skills/mermaid-workflow/references/paths.md), [browse](skills/mermaid-workflow/references/browse.md), [edit](skills/mermaid-workflow/references/edit.md), [analyze](skills/mermaid-workflow/references/analyze.md), [export](skills/mermaid-workflow/references/export.md), [workflow](skills/mermaid-workflow/references/workflow.md), and [errors](skills/mermaid-workflow/references/errors.md). Start with the [help index](skills/mermaid-workflow/SKILL.md) for navigation and examples. In Vulcan Code, open the bundled prompt skill with the skill tool.
 
 ## On-disk compatibility
 
@@ -71,7 +71,7 @@ Limits: 100 writes per batch, 1 MiB per field/metadata file, 16 MiB scanned work
 
 ## Development and packaging
 
-Baseline: `.luaskills-version` pins the [luaskills-debug](https://github.com/LuaSkills/luaskills-debug) release **v0.9.0** (its major and minor version follow the embedded LuaSkills runtime); `dependencies.yaml` pins managed Node **24.18.0** and pnpm **11.11.0**. First-time development setup requires network access to verified official runtime downloads and locked npm packages; exported viewers are fully offline. Python 3.11+ and PyYAML are needed for development scripts.
+Baseline: `.luaskills-version` pins the [luaskills-debug](https://github.com/LuaSkills/luaskills-debug) release **v0.9.1** (its major and minor version follow the embedded LuaSkills runtime); `dependencies.yaml` pins managed Node **24.18.0** and pnpm **11.11.0**. First-time development setup requires network access to verified official runtime downloads and locked npm packages; exported viewers are fully offline. Python 3.11+ and PyYAML are needed for development scripts.
 
 `scripts/setup_debug.ps1` / `scripts/setup_debug.sh` download `luaskills-debug-tool-{platform}.tar.gz` and `luaskills-debug-checksums.txt` from the luaskills-debug release, verify the archive's SHA-256 against its checksums line, and extract it into the Git-ignored `.luaskills-debug/` (which must not be a symbolic link or junction). Lua runtime packages, Node.js and pnpm are then installed by the `setup_runtime` and `scripts/deps/fetch_managed_runtimes.*` scripts that ship inside the verified archive.
 
@@ -87,8 +87,8 @@ python3 -m pip install pyyaml
 bash scripts/verify_skill.sh
 ```
 
-Verification runs the release-version tests, managed Node tests, Windows-neutral asset building (`scripts/build_viewer.mjs`), and the luaskills-debug `sync -> inspect -> list-tools -> call` flow for all nine actions in explicit-PWD and no-PWD absolute modes, then `validate` and `package`, which write `vulcan-mermaid-v<version>-skill.zip` and `vulcan-mermaid-v<version>-checksums.txt` to `dist/`. The runtime tool count is asserted to be exactly one. The ZIP has one `vulcan-mermaid/` top-level directory holding `skill.yaml`, `dependencies.yaml`, the READMEs, `LICENSE`, `runtime/`, `node/`, `help/`, `overflow_templates/`, `resources/` and `licenses/`; dependencies, examples, tests, scripts and `.agents` never enter it. The built viewer assets (`resources/dagre.min.js` and the copied licenses) are committed, so packaging needs no build step.
+Verification runs the release-version tests, managed Node tests, Windows-neutral asset building (`scripts/build_viewer.mjs`), and the luaskills-debug `sync -> inspect -> list-tools -> call` flow for all nine actions in explicit-PWD and no-PWD absolute modes, then `validate` and `package`, which write `vulcan-mermaid-v<version>-skill.zip` and `vulcan-mermaid-v<version>-checksums.txt` to `dist/`. The runtime tool count is asserted to be exactly one. The ZIP has one `vulcan-mermaid/` top-level directory holding `skill.yaml`, `dependencies.yaml`, the READMEs, `LICENSE`, `runtime/`, `node/`, `skills/`, `overflow_templates/`, `resources/` and `licenses/`; dependencies, examples, tests, scripts and `.agents` never enter it. The built viewer assets (`resources/dagre.min.js` and the copied licenses) are committed, so packaging needs no build step.
 
-On a `v*` tag, the release workflow runs the `LuaSkills/luaskills-debug@v0.9.0` action (`layout: standard`, `expect-tag` set to the tag, which must equal `v<skill.yaml version>`) and publishes its assets with `gh release create`. The validate workflow runs the verification flow on Linux, Windows and macOS and uploads `dist/*`. This repository does not automatically publish or configure a remote.
+On a `v*` tag, the release workflow runs the `LuaSkills/luaskills-debug@v0.9.1` action (`layout: standard`, `expect-tag` set to the tag, which must equal `v<skill.yaml version>`) and publishes its assets with `gh release create`. The validate workflow runs the verification flow on Linux, Windows and macOS and uploads `dist/*`. This repository does not automatically publish or configure a remote.
 
-`examples/upstream/.omm` contains the complete imported upstream sample (62 nodes, 6 diagrams); copy it to a disposable project to explore it. `examples/workspace.args.json` and `examples/absolute.args.json` show the two path modes. See [help/workspace.md](help/workspace.md) for the tool contract and [licenses/THIRD_PARTY_NOTICES.md](licenses/THIRD_PARTY_NOTICES.md) for provenance.
+`examples/upstream/.omm` contains the complete imported upstream sample (62 nodes, 6 diagrams); copy it to a disposable project to explore it. `examples/workspace.args.json` and `examples/absolute.args.json` show the two path modes. See [skills/mermaid-workflow/references/workspace.md](skills/mermaid-workflow/references/workspace.md) for the tool contract and [licenses/THIRD_PARTY_NOTICES.md](licenses/THIRD_PARTY_NOTICES.md) for provenance.

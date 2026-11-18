@@ -1,42 +1,38 @@
 name: Vulcan Mermaid
-version: 0.1.2
+version: 0.1.3
 enable: true
 debug: false
-help:
-  main:
-    description: 帮助目录：路径、浏览、编辑、分析、离线导出、工作流与错误处理。
-    file: help/help.md
-  topics:
-    - name: workspace
-      description: 工具总览：九种 action、参数规则及返回结构。
-      file: help/workspace.md
-    - name: paths
-      description: 路径基础：宿主暗传 PWD、无 PWD 完整路径、Windows 与导出位置。
-      file: help/paths.md
-    - name: browse
-      description: 浏览读取：tree、read 与结果路径复用。
-      file: help/browse.md
-    - name: edit
-      description: 文档编辑：init、批量 write、历史与可恢复 delete。
-      file: help/edit.md
-    - name: analyze
-      description: 图分析：validate、diff、refs、流程图语法与引用。
-      file: help/analyze.md
-    - name: export
-      description: 离线查看：导出 HTML、范围、输出路径与查看器操作。
-      file: help/export.md
-    - name: workflow
-      description: 上手流程：根据源码建立架构文档、验证、比较及导出。
-      file: help/workflow.md
-    - name: errors
-      description: 故障定位：错误码、修复方法、限额和恢复边界。
-      file: help/errors.md
+registration:
+  mode: implicit
+  default_locale: en-US
+  locales:
+    en-US:
+      title: "Vulcan Mermaid"
+      description: "Browse, edit, validate, and export local Mermaid architecture documents."
+    zh-CN:
+      title: "Vulcan Mermaid"
+      description: "浏览、编辑、校验和导出本地 Mermaid 架构文档。"
+    zh-TW:
+      title: "Vulcan Mermaid"
+      description: "瀏覽、編輯、驗證及匯出本機 Mermaid 架構文件。"
+  prompt_skills:
+    - name: mermaid-workflow
+      file: skills/mermaid-workflow/SKILL.md
+      locales:
+        en-US:
+          title: "Mermaid architecture workflow"
+          description: "Use for .omm workspaces, Mermaid validation and diffs, or offline HTML export."
+        zh-CN:
+          title: "Mermaid 架构文档指南"
+          description: "介绍如何操作 .omm 工作区、校验和比较 Mermaid 图，以及离线导出 HTML。"
+        zh-TW:
+          title: "Mermaid 架構文件指南"
+          description: "說明如何操作 .omm 工作區、驗證和比較 Mermaid 圖，以及離線匯出 HTML。"
 entries:
   - name: workspace
-    description: Manage local .omm architecture documents with one action-based tool. Optional host-injected PWD enables relative node paths; without PWD use absolute .omm paths. Supports init, tree, read, batch write, delete, validate, diff, refs and offline HTML export. Help topics cover paths, browse, edit, analyze, export, workflow and errors.
+    description: Manage local .omm architecture documents with one action-based tool. Optional host-injected PWD enables relative node paths; without PWD use absolute .omm paths. Supports init, tree, read, batch write, delete, validate, diff, refs and offline HTML export.
     lua_entry: runtime/workspace.lua
     lua_module: workspace
-    help: workspace
     input_schema:
       type: object
       additionalProperties: false
@@ -48,7 +44,7 @@ entries:
         action:
           type: string
           enum: [init, tree, read, write, delete, validate, diff, refs, export]
-          description: init creates the workspace; tree/read browse; write updates fields in one batch; delete moves to trash; validate checks syntax/references; diff compares history or before/after; refs lists document links; export writes offline HTML. See categorized help for action-specific examples.
+          description: init creates the workspace; tree/read browse; write updates fields in one batch; delete moves to trash; validate checks syntax/references; diff compares history or before/after; refs lists document links; export writes offline HTML. See the mermaid-workflow Skill for action-specific examples.
         path:
           type: string
           minLength: 1
@@ -72,13 +68,13 @@ entries:
                 additionalProperties: false
                 minProperties: 1
                 properties:
-                  description: {type: string, description: "Node overview / 节点概述"}
-                  diagram: {type: string, description: "Architecture flowchart source / 架构流程图源码"}
-                  constraint: {type: string, description: "Design constraints / 设计约束"}
-                  concern: {type: string, description: "Risks and concerns / 风险与关注点"}
-                  context: {type: string, description: "Background and evidence / 背景及依据"}
-                  todo: {type: string, description: "Pending tasks / 待办事项"}
-                  note: {type: string, description: "Additional notes / 补充说明"}
+                  description: {type: string, description: "Node overview"}
+                  diagram: {type: string, description: "Architecture flowchart source"}
+                  constraint: {type: string, description: "Design constraints"}
+                  concern: {type: string, description: "Risks and concerns"}
+                  context: {type: string, description: "Background and evidence"}
+                  todo: {type: string, description: "Pending tasks"}
+                  note: {type: string, description: "Additional notes"}
         before:
           type: string
           description: Previous source for filesystem-free diff; must be supplied together with after and without path. No PWD is needed.

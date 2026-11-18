@@ -85,40 +85,45 @@ def managed_node() -> Path:
     return node
 
 
-def verify_help(synced_skill_path: Path) -> None:
-    """Verify packaged help registration, links and JSON examples; synced_skill_path is the official runtime copy, returns None.
-    验证包内帮助注册、链接及 JSON 示例；synced_skill_path 为官方运行时副本，无返回值。
+def verify_prompt_skill(synced_skill_path: Path) -> None:
+    """Verify the synchronized prompt skill, localization, links, and JSON examples.
+    校验同步包中的提示词 Skill、本地化、链接及 JSON 示例。
     """
-    # Manifest is loaded from the actual synchronized package, not a guessed host API.
-    # Manifest 从实际同步包中加载，不使用猜测的宿主 API。
+    # Use the synchronized manifest so a missing packaged file is detected.
+    # 读取同步后的清单，以便发现缺失的随包文件。
     manifest = yaml.safe_load((synced_skill_path / "skill.yaml").read_text(encoding="utf-8"))
-    # Topics and index follow the public help.main/help.topics manifest contract.
-    # Topics 和 index 遵循公开 help.main/help.topics 清单契约。
-    topics = manifest["help"]["topics"]
-    index = synced_skill_path / manifest["help"]["main"]["file"]
-    assert [topic["name"] for topic in topics] == ["workspace", "paths", "browse", "edit", "analyze", "export", "workflow", "errors"]
-    assert manifest["entries"][0]["help"] == "workspace"
-    # IndexText must make every topic discoverable from the main help document.
-    # IndexText 必须使每个主题都能从主帮助文档中发现。
+    registration = manifest["registration"]
+    assert registration["mode"] == "implicit"
+    default_locale = registration["default_locale"]
+    assert default_locale in registration["locales"]
+    assert len(registration["prompt_skills"]) == 1
+    guide = registration["prompt_skills"][0]
+    assert default_locale in guide["locales"]
+
+    # Match the declared skill name and confirm every shipped reference can be opened from the guide.
+    # 匹配声明的技能名称，并确认能从指南打开每份随包参考资料。
+    index = synced_skill_path / guide["file"]
     index_text = index.read_text(encoding="utf-8")
-    for topic in topics:
-        assert f"({Path(topic['file']).name})" in index_text
-    for relative in [manifest["help"]["main"]["file"], *[topic["file"] for topic in topics]]:
-        # Document and text identify one shipped UTF-8 help document.
-        # Document 和 text 标识一份实际分发的 UTF-8 帮助文档。
-        document = synced_skill_path / relative
-        text = document.read_text(encoding="utf-8")
-        assert text == (ROOT / relative).read_text(encoding="utf-8")
-        for target in re.findall(r"\]\(([^)]+)\)", text):
-            assert (document.parent / target).is_file(), (relative, target)
-        for example in re.findall(r"```json\s*\n(.*?)\n```", text, re.DOTALL):
+    frontmatter = yaml.safe_load(index_text.split("---", 2)[1])
+    assert index.parent.name == frontmatter["name"] == guide["name"]
+    references = sorted((index.parent / "references").glob("*.md"))
+    assert {path.stem for path in references} == {"workspace", "paths", "browse", "edit", "analyze", "export", "workflow", "errors"}
+    for reference in references:
+        assert f"(references/{reference.name})" in index_text
+    for document in [index, *references]:
+        # Each reference link and JSON example must resolve from the document that contains it.
+        # 每个参考链接和 JSON 示例都应从其所在文档正确解析。
+        content = document.read_text(encoding="utf-8")
+        for target in re.findall(r"\]\(([^)]+)\)", content):
+            assert (document.parent / target).is_file(), (document, target)
+        for example in re.findall(r"```json\s*\n(.*?)\n```", content, re.DOTALL):
             json.loads(example)
     # ShippedAssets are the overflow template and offline-viewer files the export action reads at runtime.
     # ShippedAssets 是导出操作在运行时读取的溢出模板与离线查看器文件。
     shipped_assets = ["overflow_templates/workspace.md", "resources/viewer.html", "resources/viewer.mjs", "resources/dagre.min.js"]
     for relative in shipped_assets:
         assert (synced_skill_path / relative).is_file(), relative
-    print("Synchronized help verified: main index, eight registered topics, links and JSON examples; overflow template and viewer assets present.")
+    print("Synchronized prompt skill verified: one guide, eight references, links and JSON examples; overflow template and viewer assets present.")
 
 
 def smoke() -> None:
@@ -129,7 +134,7 @@ def smoke() -> None:
     # Inspection exposes the exact synchronized package location in the official debugger protocol.
     # Inspection 通过官方调试器协议暴露准确的同步包位置。
     inspection = debug("inspect")
-    verify_help(Path(inspection["synced_skill_path"]))
+    verify_prompt_skill(Path(inspection["synced_skill_path"]))
     # Tools asserts one canonical tool without a duplicated skill prefix.
     # Tools 断言只有一个规范工具名，不重复技能前缀。
     tools = debug("list-tools")
@@ -212,7 +217,7 @@ def smoke() -> None:
         invoke("delete", path="architecture", recursive=True)
         assert not (project / ".omm/architecture").exists()
         assert not invoke("validate")["result"]["valid"]
-    print("Official debugger full flow passed: one tool, nine actions in both path modes, eight help topics, managed Node, Unicode/space paths.")
+    print("Official debugger full flow passed: one tool, nine actions in both path modes, eight Skill reference files, managed Node, Unicode/space paths.")
 
 
 if __name__ == "__main__":
